@@ -1,0 +1,20 @@
+# Node modules
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.env
+
+# Backend data folder
+backend/app/data/

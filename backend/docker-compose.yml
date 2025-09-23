@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  backend:
+    container_name: clicom-backend
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/code/app   # para reload en modo desarrollo
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug

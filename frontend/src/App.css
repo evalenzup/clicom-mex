@@ -21,14 +21,55 @@ body{
 
 /* Layout principal */
 .container{
-  display:grid; grid-template-columns: 340px 1fr; grid-template-rows: 100vh; height:100vh;
+  position: relative;
+  height:100vh;
+  width: 100vw;
+  overflow-x: hidden; /* Prevenir barra de scroll horizontal */
 }
-.map-wrap{ position:relative; }
+.map-wrap{ position:absolute; top: 0; left: 0; width: 100%; height: 100%; }
 .map-container{ width:100%; height:100%; background:var(--bg-0); }
 
 /* ===== SideDock ===== */
-.sidedock{ position:relative; padding:10px; }
-.sidedock--collapsed{ width:64px; }
+.sidedock{
+  position:absolute;
+  z-index: 1000;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 340px;
+  transform: translateX(0);
+  transition: transform 0.3s ease;
+  box-sizing: border-box;
+  /* Estilos para el panel flotante */
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 16px 16px 0;
+  box-shadow: var(--shadow-1);
+  backdrop-filter: blur(10px) saturate(140%);
+}
+
+.sidedock--collapsed{
+  transform: translateX(-100%);
+  padding: 0;
+}
+
+/* El "tirador" para re-abrir el panel */
+.sidedock--collapsed .sidedock__topbar {
+  position: absolute;
+  top: 10px;
+  left: 100%; /* Se posiciona justo a la derecha del panel oculto */
+  padding: 0;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 12px 12px 0;
+  box-shadow: var(--shadow-1);
+}
+
+.sidedock--collapsed .sidedock__topbar .icon-btn {
+  margin: 6px;
+}
 .sidedock__topbar{ display:flex; align-items:center; gap:8px; }
 .sidedock__title{ font-weight:700; }
 .icon-btn{

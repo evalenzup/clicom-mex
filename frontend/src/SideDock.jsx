@@ -4,6 +4,8 @@ import React, { useState } from 'react';
  * SideDock colapsable, compacto, estilo Windy.
  */
 export default function SideDock({
+  collapsed,
+  onToggleCollapse,
   basemapKeys,
   activeBasemap,
   onChangeBasemap,
@@ -17,15 +19,13 @@ export default function SideDock({
   stations,
   onSelectStation,
 }) {
-  const [collapsed, setCollapsed] = useState(false);
-
   return (
     <aside className={`sidedock ${collapsed ? 'sidedock--collapsed' : ''}`}>
       <div className="sidedock__topbar">
         <button
           className="icon-btn"
           title={collapsed ? 'Expandir' : 'Colapsar'}
-          onClick={() => setCollapsed(v => !v)}
+          onClick={onToggleCollapse}
         >
           ☰
         </button>

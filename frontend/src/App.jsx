@@ -27,6 +27,10 @@ const basemaps = {
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }),
   Satelite: () =>
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20 }),
+  CartoLight: () =>
+    L.tileLayer('https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
+  Topo: () =>
+    L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17 })
 };
 
 export default function App() {
@@ -43,6 +47,7 @@ export default function App() {
   // mapa
   const [activeBasemap, setActiveBasemap] = useState('OSM');
   const [fitAll, setFitAll] = useState(true);
+  const [sideDockCollapsed, setSideDockCollapsed] = useState(false);
 
 
   // sidedock
@@ -272,6 +277,8 @@ export default function App() {
   return (
     <div className="container">
       <SideDock
+        collapsed={sideDockCollapsed}
+        onToggleCollapse={() => setSideDockCollapsed(v => !v)}
         basemapKeys={basemapKeys}
         activeBasemap={activeBasemap}
         onChangeBasemap={setActiveBasemap}

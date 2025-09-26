@@ -1,51 +1,112 @@
-import React from 'react';
-import { Select, Input } from 'antd';
+import React, { useState } from 'react';
 
-const { Option } = Select;
-const { Search } = Input;
-
-const SideDock = ({
-  estados,
+/**
+ * SideDock colapsable, compacto, estilo Windy.
+ */
+export default function SideDock({
+  basemapKeys,
+  activeBasemap,
+  onChangeBasemap,
+  estadoOptions,
   selectedEstado,
-  setSelectedEstado,
+  onChangeEstado,
   query,
-  setQuery,
-  filteredStations,
-  selectedStation,
-  setSelectedStation,
-}) => {
-  return (
-    <div className="sidebar">
-      <h1 className="title">Visor de Estaciones</h1>
-      <Select
-        value={selectedEstado}
-        onChange={setSelectedEstado}
-        style={{ width: '100%', marginBottom: 20 }}
-        placeholder="Selecciona un estado"
-      >
-        {estados.map(e => (
-          <Option key={e.ESTADO_ABREVIADO} value={e.ESTADO_ABREVIADO}>{e.NOMBRE_ESTADO}</Option>
-        ))}
-      </Select>
-      <Search
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        placeholder="Buscar estación (nombre o clave)"
-        className="search-input"
-      />
-      <ul className="station-list">
-        {filteredStations.map(est => (
-          <li
-            key={`${est.ESTADO}-${est.ESTACION}`}
-            className={`station-item ${selectedStation?.ESTACION === est.ESTACION ? 'active' : ''}`}
-            onClick={() => setSelectedStation(est)}
-          >
-            {est.NOMBRE}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-};
+  onChangeQuery,
+  fitAll,
+  onToggleFitAll,
+  stations,
+  onSelectStation,
+}) {
+  const [collapsed, setCollapsed] = useState(false);
 
-export default SideDock;
+  return (
+    <aside className={`sidedock ${collapsed ? 'sidedock--collapsed' : ''}`}>
+      <div className="sidedock__topbar">
+        <button
+          className="icon-btn"
+          title={collapsed ? 'Expandir' : 'Colapsar'}
+          onClick={() => setCollapsed(v => !v)}
+        >
+          ☰
+        </button>
+        {!collapsed && <div className="sidedock__title">Visor de Estaciones</div>}
+      </div>
+
+      {!collapsed && (
+        <div className="sidedock__content glass">
+          <div className="sidedock__row">
+            <label className="label">Estado</label>
+            <select
+              className="input"
+              value={selectedEstado ?? ''}
+              onChange={(e) => onChangeEstado(e.target.value || null)}
+            >
+              {estadoOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="sidedock__row">
+            <label className="label">Buscar</label>
+            <div className="pill">
+              <span>🔎</span>
+              <input
+                className="pill__input"
+                placeholder="Nombre o clave…"
+                value={query}
+                onChange={(e) => onChangeQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="sidedock__row">
+            <label className="label">Mapa base</label>
+            <div className="chips">
+              {basemapKeys.map(k => (
+                <button
+                  key={k}
+                  className={`chip ${activeBasemap === k ? 'chip--active' : ''}`}
+                  onClick={() => onChangeBasemap(k)}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="sidedock__row">
+            <div className="chips">
+              <button className={`chip ${fitAll ? 'chip--active' : ''}`} onClick={onToggleFitAll}>
+                {fitAll ? 'Auto-fit ON' : 'Auto-fit OFF'}
+              </button>
+              <div className="card">
+                <div className="card__label">Estaciones visibles</div>
+                <div className="card__value">{stations.length}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="sidedock__list">
+            <ul className="station-list">
+              {stations.map((est) => (
+                <li
+                  key={`${est.ESTADO}-${est.ESTACION}`}
+                  className="station-item"
+                  onClick={() => onSelectStation(est)}
+                  title={est.NOMBRE}
+                >
+                  <div className="station-item__name">{est.NOMBRE ?? '—'}</div>
+                  <div className="station-item__meta">
+                    <span className="badge">{est.ESTACION ?? '—'}</span>
+                    <span className="badge">{est.ESTADO ?? '—'}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}

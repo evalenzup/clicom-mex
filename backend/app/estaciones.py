@@ -1,10 +1,21 @@
-from fastapi import APIRouter, HTTPException, Query
-from app import store
-from app.data_loader import load_station_catalog, load_states_catalog, load_station_data, calculate_annual_cycle, calculate_monthly_average, calculate_yearly_average, calculate_monthly_annual_cycle
+from fastapi import APIRouter, HTTPException, Query, Depends
+from . import store
+from .data_loader import (
+    load_station_catalog, 
+    load_states_catalog, 
+    load_station_data, 
+    calculate_annual_cycle, 
+    calculate_monthly_average, 
+    calculate_yearly_average, 
+    calculate_monthly_annual_cycle,
+    filter_data_by_date
+)
 import pandas as pd
 import numpy as np
 
-router = APIRouter()
+router = APIRouter(
+    tags=["estaciones"]
+)
 
 @router.get("/estaciones", summary="Obtener el catálogo de todas las estaciones")
 def listar_estaciones():
@@ -16,77 +27,72 @@ def listar_estaciones():
         load_station_catalog()
     return store.STATION_CATALOG
 
-@router.get("/estaciones/{estado}/{id}/datos", summary="Obtener datos de una estación específica")
-def datos_estacion_estado(
-    estado: str, 
-    id: str,
-    start_date: str | None = Query(default=None, alias="fecha_inicio"),
-    end_date: str | None = Query(default=None, alias="fecha_fin")
-):
+def get_station_data(id: str) -> pd.DataFrame:
     """
-    Devuelve los datos climatológicos para una estación específica por su ID.
-    Si los datos no están en caché, se cargan bajo demanda.
-    
-    - **estado**: Abreviatura del estado (actualmente no se usa en la lógica, pero se mantiene en la ruta por compatibilidad).
-    - **id**: ID único de la estación.
-    - **fecha_inicio**: Fecha de inicio para filtrar los datos (formato YYYY-MM-DD).
-    - **fecha_fin**: Fecha de fin para filtrar los datos (formato YYYY-MM-DD).
+    Dependencia de FastAPI para obtener los datos de una estación como DataFrame.
+    Carga los datos si no están en caché y maneja el error 404.
     """
     full_data = store.STATION_DATA.get(id)
     if full_data is None:
         full_data = load_station_data(id)
         if full_data is None:
             raise HTTPException(status_code=404, detail=f"Datos no encontrados para la estación con ID {id}")
-
-    # Si no hay fechas de filtro, devolver todos los datos
-    if not start_date and not end_date:
-        return full_data
-
-    # Si hay fechas, filtrar
-    df = pd.DataFrame(full_data['datos'])
-    if df.empty:
-        return full_data # Devuelve la estructura vacía si no hay datos
-
-    df['Fecha'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y')
-
-    if start_date:
-        df = df[df['Fecha'] >= pd.to_datetime(start_date)]
-    if end_date:
-        df = df[df['Fecha'] <= pd.to_datetime(end_date)]
-
-    # Devolver los datos filtrados con la misma estructura
-    # Reemplazar NaNs por Nones para que sea compatible con JSON
-    df = df.replace({np.nan: None})
-    # Convertir la columna de fecha de nuevo a string para la respuesta JSON
-    df['Fecha'] = df['Fecha'].dt.strftime('%d/%m/%Y')
-    filtered_datos = df.to_dict(orient='records')
     
-    # Actualizar el periodo en la respuesta
+    # Devolvemos el DataFrame directamente para su procesamiento
+    return full_data
+
+class DateFilters:
+    """Dependencia para agrupar los parámetros de filtro de fecha."""
+    def __init__(
+        self,
+        start_date: str | None = Query(default=None, alias="fecha_inicio", description="Fecha de inicio (YYYY-MM-DD)"),
+        end_date: str | None = Query(default=None, alias="fecha_fin", description="Fecha de fin (YYYY-MM-DD)"),
+    ):
+        self.start_date = start_date
+        self.end_date = end_date
+
+@router.get("/estaciones/{id:path}/datos", summary="Obtener datos de una estación específica")
+def datos_estacion_estado(
+    id: str, 
+    full_data: dict = Depends(get_station_data),
+    date_filters: DateFilters = Depends()
+):
+    """
+    Devuelve los datos climatológicos para una estación específica por su ID.
+    - **id**: ID único de la estación.
+    - **fecha_inicio**: Fecha de inicio para filtrar los datos (formato YYYY-MM-DD).
+    - **fecha_fin**: Fecha de fin para filtrar los datos (formato YYYY-MM-DD).
+    """
+    df = pd.DataFrame(full_data['datos'])
+    
+    # La columna 'Fecha' ya es datetime gracias a la optimización en data_loader
+    filtered_df = filter_data_by_date(df, date_filters.start_date, date_filters.end_date)
+
+    filtered_df = filtered_df.replace({np.nan: None})
+    filtered_df['Fecha'] = filtered_df['Fecha'].dt.strftime('%d/%m/%Y')
+    filtered_datos = filtered_df.to_dict(orient='records')
+    
     periodo_filtrado = {
         "inicio": filtered_datos[0]['Fecha'] if filtered_datos else None,
         "fin": filtered_datos[-1]['Fecha'] if filtered_datos else None,
     }
 
     return {
-        "variables": full_data['variables'],
+        "variables": full_data['variables'], # Las variables no cambian con el filtro
         "periodo": periodo_filtrado,
         "datos": filtered_datos
     }
 
-@router.get("/estaciones/{estado}/{id}/ciclo-anual", summary="Calcula el ciclo anual de una estación")
+@router.get("/estaciones/{id:path}/ciclo-anual", summary="Calcula el ciclo anual de una estación")
 def obtener_ciclo_anual(
     id: str,
-    start_date: str | None = Query(default=None, alias="fecha_inicio"),
-    end_date: str | None = Query(default=None, alias="fecha_fin")
+    date_filters: DateFilters = Depends()
 ):
     """
     Calcula el promedio de cada día del año para todas las variables numéricas
     de una estación específica.
     """
-    ciclo_data = calculate_annual_cycle(id, start_date=start_date, end_date=end_date)
-    if ciclo_data is None:
-        raise HTTPException(status_code=404, detail=f"Datos no encontrados para calcular el ciclo anual de la estación con ID {id}")
-    return ciclo_data
+    return calculate_annual_cycle(id, start_date=date_filters.start_date, end_date=date_filters.end_date)
 
 @router.get("/estados", summary="Obtener el catálogo de estados de México")
 def obtener_estados():
@@ -98,46 +104,36 @@ def obtener_estados():
         load_states_catalog()
     return store.STATES_CATALOG
 
-@router.get("/estaciones/{estado}/{id}/promedio-mensual", summary="Calcula el promedio mensual de una estación")
+@router.get("/estaciones/{id:path}/promedio-mensual", summary="Calcula el promedio mensual de una estación")
 def obtener_promedio_mensual(
     id: str,
-    start_date: str | None = Query(default=None, alias="fecha_inicio"),
-    end_date: str | None = Query(default=None, alias="fecha_fin")
+    date_filters: DateFilters = Depends()
 ):
     """
     Calcula el promedio de cada mes para todas las variables numéricas
     de una estación específica, opcionalmente dentro de un rango de fechas.
     """
-    monthly_data = calculate_monthly_average(id, start_date=start_date, end_date=end_date)
-    if monthly_data is None:
-        raise HTTPException(status_code=404, detail=f"Datos no encontrados para calcular el promedio mensual de la estación con ID {id}")
-    return monthly_data
+    return calculate_monthly_average(id, start_date=date_filters.start_date, end_date=date_filters.end_date)
 
-@router.get("/estaciones/{estado}/{id}/promedio-anual", summary="Calcula el promedio anual de una estación")
+@router.get("/estaciones/{id:path}/promedio-anual", summary="Calcula el promedio anual de una estación")
 def obtener_promedio_anual(
     id: str,
-    start_date: str | None = Query(default=None, alias="fecha_inicio"),
-    end_date: str | None = Query(default=None, alias="fecha_fin")
+    date_filters: DateFilters = Depends()
 ):
     """
     Calcula el promedio de cada año para todas las variables numéricas
     de una estación específica, opcionalmente dentro de un rango de fechas.
     """
-    yearly_data = calculate_yearly_average(id, start_date=start_date, end_date=end_date)
-    if yearly_data is None:
-        raise HTTPException(status_code=404, detail=f"Datos no encontrados para calcular el promedio anual de la estación con ID {id}")
-    return yearly_data
+    return calculate_yearly_average(id, start_date=date_filters.start_date, end_date=date_filters.end_date)
 
-@router.get("/estaciones/{estado}/{id}/ciclo-anual-mensual", summary="Calcula el ciclo anual de promedios mensuales para una estación")
+@router.get("/estaciones/{id:path}/ciclo-anual-mensual", summary="Calcula el ciclo anual de promedios mensuales para una estación")
 def obtener_ciclo_anual_mensual(
     id: str,
-    start_date: str | None = Query(default=None, alias="fecha_inicio"),
-    end_date: str | None = Query(default=None, alias="fecha_fin")
+    date_filters: DateFilters = Depends()
 ):
     """
     Calcula el promedio de cada mes a lo largo de todos los años para una estación.
     """
-    data = calculate_monthly_annual_cycle(id, start_date=start_date, end_date=end_date)
-    if data is None:
-        raise HTTPException(status_code=404, detail=f"Datos no encontrados para calcular el ciclo anual mensual de la estación con ID {id}")
-    return data
+    # La dependencia get_station_data ya se encarga de la carga y el error 404
+    # implícitamente a través de la función de cálculo.
+    return calculate_monthly_annual_cycle(id, start_date=date_filters.start_date, end_date=date_filters.end_date)

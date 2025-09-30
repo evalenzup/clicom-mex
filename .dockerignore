@@ -18,4 +18,4 @@ __pycache__/
 # Archivos de dependencias locales (si se usaran)
 *.egg-info/
 
-app/data/
+backend/app/data/

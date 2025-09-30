@@ -48,12 +48,19 @@ def load_station_data(station_id: str):
     Carga y procesa los datos de una estación específica desde su archivo CSV.
     """
     logger.info(f"Cargando datos para la estación {station_id}...")
-    
-    # El patrón de búsqueda distingue entre IDs numéricos y alfanuméricos
-    pattern = f"dia{station_id}.csv" if not station_id.isnumeric() else f"dia0{station_id}.csv"
-    
+
+    # Extraer la parte numérica del ID, que es lo que está en el nombre del archivo.
+    try:
+        numeric_id = station_id.split('/')[-1]
+    except:
+        numeric_id = station_id
+
+    # Construir un patrón para encontrar el archivo en cualquier subdirectorio,
+    # buscando por la terminación numérica.
+    pattern = f"dia*{numeric_id}.csv"
+
     csv_files = list(CSV_DIR.rglob(pattern))
-    
+
     if not csv_files:
         logger.error(f"No se encontró el archivo CSV para la estación {station_id} con el patrón {pattern}")
         return None
@@ -68,8 +75,11 @@ def load_station_data(station_id: str):
             logger.warning(f"Archivo sin columna 'Fecha': {csv_file}")
             return None
 
-        # Limpieza y formateo
-        df = df.replace({np.nan: None})
+        # Convertir la fecha UNA SOLA VEZ al cargar los datos.
+        # Esto optimiza todos los cálculos posteriores.
+        df['Fecha'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y', errors='coerce')
+        df.dropna(subset=['Fecha'], inplace=True) # Eliminar filas donde la fecha no fue válida
+        df = df.sort_values(by='Fecha').reset_index(drop=True)
 
         # Calcular TProm si TMAX y TMIN están presentes
         if 'TMAX' in df.columns and 'TMIN' in df.columns:
@@ -82,13 +92,15 @@ def load_station_data(station_id: str):
         # Extraer variables y periodo
         variables = list(df.columns.drop("Fecha"))
         periodo = {
-            "inicio": df["Fecha"].iloc[0] if not df.empty else None,
-            "fin": df["Fecha"].iloc[-1] if not df.empty else None,
+            # Formatear a string para el JSON de metadatos
+            "inicio": df["Fecha"].iloc[0].strftime('%d/%m/%Y') if not df.empty else None,
+            "fin": df["Fecha"].iloc[-1].strftime('%d/%m/%Y') if not df.empty else None,
         }
 
         station_data = {
             "variables": variables,
             "periodo": periodo,
+            # Guardamos el DataFrame con fechas como datetime para eficiencia
             "datos": df.to_dict(orient="records"),
         }
         
@@ -102,6 +114,17 @@ def load_station_data(station_id: str):
         logger.error(f"Error procesando el archivo {csv_file}: {e}")
         return None
 
+def filter_data_by_date(df: pd.DataFrame, start_date: str | None, end_date: str | None) -> pd.DataFrame:
+    """Función de utilidad para filtrar un DataFrame por rango de fechas."""
+    if df.empty:
+        return df
+    # La columna 'Fecha' ya es de tipo datetime
+    if start_date:
+        df = df[df['Fecha'] >= pd.to_datetime(start_date)]
+    if end_date:
+        df = df[df['Fecha'] <= pd.to_datetime(end_date)]
+    return df
+
 def calculate_annual_cycle(station_id: str, start_date: str | None = None, end_date: str | None = None):
     """Calcula el ciclo anual para una estación dada, opcionalmente filtrando por un rango de fechas."""
     station_full_data = store.STATION_DATA.get(station_id)
@@ -114,18 +137,13 @@ def calculate_annual_cycle(station_id: str, start_date: str | None = None, end_d
     df = pd.DataFrame(station_full_data['datos'])
     if df.empty:
         return {"variables": station_full_data['variables'], "datos": []}
+    
+    # La columna 'Fecha' ya es datetime. Convertimos los datos de 'records' a DataFrame.
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
 
-    # Identify numeric columns BEFORE adding month/day
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
 
-    df['Fecha'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y')
-
-    # Filtrar por rango de fechas si se proporciona
-    if start_date:
-        df = df[df['Fecha'] >= pd.to_datetime(start_date)]
-    if end_date:
-        df = df[df['Fecha'] <= pd.to_datetime(end_date)]
-    
+    df = filter_data_by_date(df, start_date, end_date)
     if df.empty:
         return {"variables": numeric_cols, "datos": []}
 
@@ -157,15 +175,10 @@ def calculate_monthly_average(station_id: str, start_date: str | None = None, en
     if df.empty:
         return {"variables": station_full_data['variables'], "datos": []}
 
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-    df['Fecha'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y')
 
-    # Filtrar por rango de fechas si se proporciona
-    if start_date:
-        df = df[df['Fecha'] >= pd.to_datetime(start_date)]
-    if end_date:
-        df = df[df['Fecha'] <= pd.to_datetime(end_date)]
-
+    df = filter_data_by_date(df, start_date, end_date)
     if df.empty:
         return {"variables": numeric_cols, "datos": []}
 
@@ -195,15 +208,10 @@ def calculate_yearly_average(station_id: str, start_date: str | None = None, end
     if df.empty:
         return {"variables": station_full_data['variables'], "datos": []}
 
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-    df['Fecha'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y')
 
-    # Filtrar por rango de fechas si se proporciona
-    if start_date:
-        df = df[df['Fecha'] >= pd.to_datetime(start_date)]
-    if end_date:
-        df = df[df['Fecha'] <= pd.to_datetime(end_date)]
-
+    df = filter_data_by_date(df, start_date, end_date)
     if df.empty:
         return {"variables": numeric_cols, "datos": []}
 
@@ -233,15 +241,10 @@ def calculate_monthly_annual_cycle(station_id: str, start_date: str | None = Non
     if df.empty:
         return {"variables": station_full_data['variables'], "datos": []}
 
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-    df['Fecha'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y')
 
-    # Filtrar por rango de fechas si se proporciona
-    if start_date:
-        df = df[df['Fecha'] >= pd.to_datetime(start_date)]
-    if end_date:
-        df = df[df['Fecha'] <= pd.to_datetime(end_date)]
-
+    df = filter_data_by_date(df, start_date, end_date)
     if df.empty:
         return {"variables": numeric_cols, "datos": []}
 

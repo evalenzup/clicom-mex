@@ -53,6 +53,9 @@ export default function App() {
   const [selectedEstado, setSelectedEstado] = useState(null);
   const [query, setQuery] = useState('');
 
+  const [minAnios, setMinAnios] = useState(0);
+  const [filterDateRange, setFilterDateRange] = useState([null, null]);
+
   // estaciones
   const [allStations, setAllStations] = useState([]);
   const [filteredStations, setFilteredStations] = useState([]);
@@ -121,6 +124,8 @@ export default function App() {
   useEffect(() => {
     if (!selectedEstado || !allStations.length) return;
     const q = query.trim().toLowerCase();
+    const [filterStart, filterEnd] = filterDateRange || [null, null];
+
     setFilteredStations(
       allStations.filter(est => {
         const estadoCampo = est.ESTADO?.toUpperCase();
@@ -131,10 +136,24 @@ export default function App() {
           !q ||
           est.NOMBRE?.toLowerCase().includes(q) ||
           String(est.ESTACION ?? '').toLowerCase().includes(q);
-        return matchEstado && matchQuery;
+        const matchAnios = !minAnios || (est.anios_de_datos && est.anios_de_datos >= minAnios);
+
+        let matchDate = true;
+        if (filterStart && filterEnd) {
+          const stationStart = est.fecha_inicial_datos ? dayjs(est.fecha_inicial_datos, 'DD/MM/YYYY') : null;
+          const stationEnd = est.fecha_final_datos ? dayjs(est.fecha_final_datos, 'DD/MM/YYYY') : null;
+          if (!stationStart || !stationEnd) {
+            matchDate = false;
+          } else {
+            // Overlap logic: (StartA <= EndB) and (EndA >= StartB)
+            matchDate = stationStart.isBefore(filterEnd.endOf('day')) && stationEnd.isAfter(filterStart.startOf('day'));
+          }
+        }
+
+        return matchEstado && matchQuery && matchAnios && matchDate;
       })
     );
-  }, [selectedEstado, allStations, estadosMap, query]);
+  }, [selectedEstado, allStations, estadosMap, query, minAnios, filterDateRange]);
 
   /* == init mapa == */
   useEffect(() => {
@@ -304,6 +323,10 @@ export default function App() {
         onToggleFitAll={() => setFitAll(v => !v)}
         stations={filteredStations}
         onSelectStation={handleSelectStation}   // <-- al elegir en la lista: centra + popup + series
+        minAnios={minAnios}
+        onChangeAnios={setMinAnios}
+        filterDateRange={filterDateRange}
+        onChangeFilterDateRange={setFilterDateRange}
       />
       {!sideOpen && (
           <button

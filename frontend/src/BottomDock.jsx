@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as echarts from 'echarts';
 import { DatePicker, Button } from 'antd';
-import { AimOutlined, DownloadOutlined, CloseOutlined } from '@ant-design/icons';
+import { AimOutlined, DownloadOutlined, CloseOutlined, FileTextOutlined } from '@ant-design/icons';
 
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
@@ -43,14 +43,48 @@ export default function BottomDock({
     if (!chart.current) return;
     const url = chart.current.getDataURL({
       type: 'jpeg',
-      backgroundColor: '#1f2937', // Un color de fondo oscuro para el JPG
-      pixelRatio: 2, // Exportar a mayor resolución
+      backgroundColor: '#1f2937',
+      pixelRatio: 2,
     });
     const link = document.createElement('a');
     const stationName = station?.NOMBRE?.replace(/\s+/g, '_') || station?.ESTACION;
     link.download = `grafica-${stationName}.jpg`;
     link.href = url;
     link.click();
+  };
+
+  const handleDownloadData = () => {
+    if (!chartData || !chartData.datos || chartData.datos.length === 0) return;
+
+    const dataToExport = chartData.datos;
+    const visibleVars = selectedVars.filter(v => chartData.variables.includes(v));
+    
+    const dateCol = chartMode === 'ciclo-anual' ? 'dia_mes' : (chartMode === 'ciclo-anual-mensual' ? 'Mes' : 'Fecha');
+    const headers = [dateCol, ...visibleVars];
+    
+    const csvRows = [
+      headers.join(','),
+      ...dataToExport.map(row => {
+        const values = headers.map(header => {
+          const value = row[header] ?? '';
+          const escaped = String(value).replace(/"/g, '""');
+          return `"${escaped}"`;
+        });
+        return values.join(',');
+      })
+    ];
+
+    const csvString = csvRows.join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const stationName = station?.NOMBRE?.replace(/\s+/g, '_') || station?.ESTACION;
+    link.setAttribute('href', url);
+    link.setAttribute('download', `datos-${stationName}-${chartMode}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const toggleVar = (v) => {
@@ -93,7 +127,6 @@ export default function BottomDock({
     if (chart.current) requestAnimationFrame(() => chart.current?.resize());
   }, [open, loading]);
 
-  // ===== Ajuste automático de ejes Y en función de las variables visibles =====
   const yAxesInfo = useMemo(() => {
     const allVars = chartData?.variables ?? [];
     const datos = chartData?.datos ?? [];
@@ -115,7 +148,6 @@ export default function BottomDock({
       return all.length ? all : [0, 1];
     };
 
-    // 🔧 helper de formato con máx 2 decimales para el eje
     const fmt2 = (val) => {
       if (!Number.isFinite(val)) return val;
       return Number(val).toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -134,7 +166,6 @@ export default function BottomDock({
           max: axisMax,
           name: unit || '',
           nameTextStyle: { color: '#c9d3e3' },
-          // 👇 Mostrar máximo 2 decimales en las etiquetas
           axisLabel: {
             color: '#c9d3e3',
             formatter: (value) => unit ? `${fmt2(value)} ${unit}` : fmt2(value),
@@ -145,8 +176,7 @@ export default function BottomDock({
       };
     };
 
-    // Grupo temperaturas (TMAX/TMIN) — sólo si alguno está visible
-    const tempVars = vars.filter(v => isTmax(v) || isTmin(v));
+    const tempVars = vars.filter(v => isTemp(v));
     if (tempVars.length) {
       const values = seriesVals(tempVars);
       const { def, unit } = mkAxis(values, '°C');
@@ -156,18 +186,16 @@ export default function BottomDock({
       tempVars.forEach(v => (mapIdx[v] = idx));
     }
 
-    // Grupo hidro (PRECIP/EVAP) con min=0 — sólo si alguno está visible
     const hydroVars = vars.filter(v => isPrecip(v) || isEvap(v));
     if (hydroVars.length) {
       const values = seriesVals(hydroVars);
-      const { def, unit } = mkAxis(values, 'mm', true); // fuerza min = 0
+      const { def, unit } = mkAxis(values, 'mm', true);
       const idx = axes.length;
       axes.push(def);
       unitByAxis[idx] = unit;
       hydroVars.forEach(v => (mapIdx[v] = idx));
     }
 
-    // Resto de visibles: eje individual
     vars.forEach(v => {
       if (mapIdx[v] != null) return;
       const values = seriesVals([v]);
@@ -207,13 +235,11 @@ export default function BottomDock({
       sampling: 'lttb',
       yAxisIndex: yAxesInfo.mapIdx[name] ?? 0,
       lineStyle: { width: 2.2 },
-      // 🔧 Anti-flicker:
       emphasis: { disabled: true },
       hoverAnimation: false,
       blendMode: 'source-over',
       data: datos.map(d => {
         const v = Number(d[name]);
-        // Para temperaturas, no graficar los ceros (suelen ser datos faltantes)
         if (isTemp(name) && v === 0) return null;
         return Number.isFinite(v) ? v : null;
       }),
@@ -221,7 +247,6 @@ export default function BottomDock({
     }));
 
     chart.current.setOption({
-      // 🔧 Anti-flicker global:
       animation: false,
       animationDurationUpdate: 0,
       animationEasingUpdate: 'linear',
@@ -311,10 +336,14 @@ export default function BottomDock({
             <span className="badge" title="Periodo de datos">
               {station?.fecha_inicial_datos || '—'} - {station?.fecha_final_datos || '—'}
             </span>
+            <span className="badge" title="Años de datos">
+              {station?.anios_de_datos ? `${station.anios_de_datos} años` : '—'}
+            </span>
           </div>
           <div className="bottom-dock-toolbar">
             <Button type="default" shape="circle" icon={<AimOutlined />} onClick={onCenter} title="Centrar en mapa" />
             <Button type="default" shape="circle" icon={<DownloadOutlined />} onClick={handleDownloadChart} title="Descargar Gráfica" />
+            <Button type="default" shape="circle" icon={<FileTextOutlined />} onClick={handleDownloadData} title="Descargar Datos (CSV)" />
             <Button type="default" shape="circle" icon={<CloseOutlined />} onClick={onClose} title="Cerrar" />
           </div>
         </div>
@@ -337,7 +366,6 @@ export default function BottomDock({
                       className={`chip ${active ? 'chip--active' : ''}`}
                       onClick={() => toggleVar(s)}
                       title={s}
-                      // 🎨 Más contraste cuando está activa
                       style={active ? {
                         background: PALETTE[(chartData?.variables ?? []).indexOf(s) % PALETTE.length],
                         color: '#0b0f14',

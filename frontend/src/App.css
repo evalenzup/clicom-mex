@@ -167,3 +167,22 @@ body{
   .sidedock__list{ height:40vh; }
   .ellipsis{ max-width:64vw; }
 }
+
+/* --- Fix para el dropdown de estados --- */
+select.input {
+  /* Apariencia para que el navegador no use su estilo nativo */
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  /* Fondo personalizado y flecha */
+  background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23c9d3e3%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.6-3.6%205.4-7.9%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22/%3E%3C/svg%3E');
+  background-repeat: no-repeat;
+  background-position: right 12px top 50%;
+  background-size: .65em auto;
+}
+
+/* Estilo para las opciones del dropdown */
+select.input option {
+  background: var(--bg-1, #0f1622);
+  color: var(--fg-0, #e6f1ff);
+}

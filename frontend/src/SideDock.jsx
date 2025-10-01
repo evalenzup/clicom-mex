@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { DatePicker } from 'antd';
+
+const { RangePicker } = DatePicker;
 
 /**
  * SideDock colapsable, compacto, estilo Windy.
@@ -18,6 +21,10 @@ export default function SideDock({
   onToggleFitAll,
   stations,
   onSelectStation,
+  minAnios,
+  onChangeAnios,
+  filterDateRange,
+  onChangeFilterDateRange,
 }) {
   return (
     <aside className={`sidedock ${collapsed ? 'sidedock--collapsed' : ''}`}>
@@ -58,6 +65,28 @@ export default function SideDock({
                 onChange={(e) => onChangeQuery(e.target.value)}
               />
             </div>
+          </div>
+
+          <div className="sidedock__row">
+            <label className="label">Años de datos Mínimos: <strong>{minAnios}</strong></label>
+            <input
+              type="range"
+              min="0"
+              max="50"
+              step="1"
+              value={minAnios}
+              onChange={(e) => onChangeAnios(Number(e.target.value))}
+              className="input-range"
+            />
+          </div>
+
+          <div className="sidedock__row">
+            <label className="label">Datos entre fechas</label>
+            <RangePicker 
+              value={filterDateRange}
+              onChange={onChangeFilterDateRange}
+              style={{ width: '100%' }}
+            />
           </div>
 
           <div className="sidedock__row">

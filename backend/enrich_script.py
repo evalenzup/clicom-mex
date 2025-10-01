@@ -23,8 +23,15 @@ def enrich_catalogs():
         return
 
     for file_path in json_files:
+        if file_path.stat().st_size < 10:
+            logger.warning(f"Omitiendo archivo de catálogo vacío: {file_path.name}")
+            continue
         with open(file_path, "r", encoding="utf-8") as f:
-            catalogs_by_file[file_path.name] = json.load(f)
+            try:
+                catalogs_by_file[file_path.name] = json.load(f)
+            except json.JSONDecodeError:
+                logger.error(f"Error decodificando {file_path.name}")
+                continue
     
     logger.info(f"Se cargaron {len(catalogs_by_file)} archivos de catálogo.")
 
@@ -32,14 +39,16 @@ def enrich_catalogs():
     total_stations = 0
     updated_stations = 0
     for filename, stations in catalogs_by_file.items():
+        if not isinstance(stations, list):
+            continue
         total_stations += len(stations)
         for station in stations:
             station_id = station.get("ESTACION")
             if not station_id:
                 continue
 
-            # 3. Encontrar y leer el CSV correspondiente
-            pattern = f"dia{station_id}.csv" if not str(station_id).isnumeric() else f"dia0{station_id}.csv"
+            # 3. Encontrar y leer el CSV correspondiente (con patrón corregido)
+            pattern = f"dia*{station_id}.csv"
             csv_files = list(CSV_DIR.rglob(pattern))
 
             if not csv_files:
@@ -47,6 +56,7 @@ def enrich_catalogs():
                 station["fecha_inicial_datos"] = None
                 station["fecha_final_datos"] = None
                 station["variables"] = []
+                station["anios_de_datos"] = 0
                 continue
 
             try:
@@ -61,25 +71,39 @@ def enrich_catalogs():
                     station["fecha_inicial_datos"] = None
                     station["fecha_final_datos"] = None
                     station["variables"] = variables
+                    station["anios_de_datos"] = 0
                     continue
                 
                 # 4. Extraer la información
                 station["fecha_inicial_datos"] = date_col_df["Fecha"].iloc[0]
                 station["fecha_final_datos"] = date_col_df["Fecha"].iloc[-1]
                 station["variables"] = variables
+                
+                # 5. Calcular y añadir los años de datos
+                try:
+                    start_date = pd.to_datetime(station["fecha_inicial_datos"], format='%d/%m/%Y')
+                    end_date = pd.to_datetime(station["fecha_final_datos"], format='%d/%m/%Y')
+                    anios_de_datos = round((end_date - start_date).days / 365.25, 1)
+                    station["anios_de_datos"] = anios_de_datos
+                except (TypeError, ValueError):
+                    station["anios_de_datos"] = 0
+
                 updated_stations += 1
-                logger.info(f"Estación actualizada: {station_id}")
+                # logger.info(f"Estación actualizada: {station_id}") # Opcional: descomentar para verbosidad
 
             except Exception as e:
                 logger.error(f"Error procesando CSV para estación {station_id}: {e}")
                 station["fecha_inicial_datos"] = None
                 station["fecha_final_datos"] = None
                 station["variables"] = []
+                station["anios_de_datos"] = 0
 
     logger.info(f"Se procesaron {total_stations} estaciones, {updated_stations} actualizadas con datos.")
 
-    # 5. Guardar los catálogos actualizados
+    # 6. Guardar los catálogos actualizados
     for filename, stations in catalogs_by_file.items():
+        if not isinstance(stations, list):
+            continue
         output_path = JSON_DIR / filename
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(stations, f, indent=2, ensure_ascii=False)

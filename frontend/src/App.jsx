@@ -18,6 +18,8 @@ L.Icon.Default.mergeOptions({
 
 import SideDock from './SideDock';
 import BottomDock from './BottomDock';
+import Contact from './Contact';
+import Info from './Info';
 import './App.css';
 
 import dayjs from 'dayjs';
@@ -75,6 +77,11 @@ export default function App() {
   const [loadingChart, setLoadingChart] = useState(false);
   const [selectedVars, setSelectedVars] = useState([]); // variables visibles
   const [dateRange, setDateRange] = useState([null, null]);
+  const [extremeParams, setExtremeParams] = useState({
+    variable: 'TMAX',
+    percentile: 90,
+    operator: 'greater',
+  });
 
   // refs de mapa
   const mapRef = useRef(null);
@@ -84,6 +91,9 @@ export default function App() {
   const markersIndex = useRef({}); // <-- índice { "ESTADO-ESTACION": marker }
 
   const serieAbortRef = useRef(null);
+
+  const [showContact, setShowContact] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
 
   /* == cargar estados == */
   useEffect(() => {
@@ -254,27 +264,36 @@ export default function App() {
     setChartData(null);
     setLoadingChart(true);
 
-    const endpointMap = {
-      'diarios': 'datos',
-      'ciclo-anual': 'ciclo-anual',
-      'promedio-mensual': 'promedio-mensual',
-      'promedio-anual': 'promedio-anual',
-      'ciclo-anual-mensual': 'ciclo-anual-mensual'
-    };
-    const endpoint = endpointMap[chartMode] || 'datos';
+    let url = '';
     const [startDate, endDate] = dateRange;
-    
     const params = new URLSearchParams();
     if (startDate) {
-      // dayjs objects from antd need to be converted to JS Date before formatting
       params.append('fecha_inicio', startDate.toDate().toISOString().split('T')[0]);
     }
     if (endDate) {
       params.append('fecha_fin', endDate.toDate().toISOString().split('T')[0]);
     }
-    const queryString = params.toString();
 
-    const url = `${API_BASE}/estaciones/${selectedStation.ESTADO}/${selectedStation.ESTACION}/${endpoint}${queryString ? `?${queryString}`: ''}`;
+    if (chartMode === 'extremos-frecuencia') {
+      params.append('variable', extremeParams.variable);
+      params.append('percentil', extremeParams.percentile);
+      params.append('operator', extremeParams.operator);
+      const queryString = params.toString();
+      url = `${API_BASE}/estaciones/${selectedStation.ESTADO}/${selectedStation.ESTACION}/extremos/frecuencia?${queryString}`;
+    } else {
+      const endpointMap = {
+        'diarios': 'datos',
+        'ciclo-anual': 'ciclo-anual',
+        'promedio-mensual': 'promedio-mensual',
+        'promedio-anual': 'promedio-anual',
+        'ciclo-anual-mensual': 'ciclo-anual-mensual',
+        'estacional': 'estacional',
+        'ciclo-anual-estacional': 'ciclo-anual-estacional'
+      };
+      const endpoint = endpointMap[chartMode] || 'datos';
+      const queryString = params.toString();
+      url = `${API_BASE}/estaciones/${selectedStation.ESTADO}/${selectedStation.ESTACION}/${endpoint}${queryString ? `?${queryString}`: ''}`;
+    }
 
     fetch(url, { signal: ac.signal })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
@@ -282,22 +301,26 @@ export default function App() {
         setChartData(data);
         const newVars = data?.variables ?? [];
         
-        // Mantener la selección de variables si aún son válidas
-        setSelectedVars(prevSelectedVars => {
-          const stillValidVars = prevSelectedVars.filter(v => newVars.includes(v));
-          if (stillValidVars.length > 0) {
-            return stillValidVars;
-          }
-          // Si no, volver al default
-          const defaults = newVars.filter(v => ['TMAX','TMIN'].includes(String(v).toUpperCase()));
-          return defaults.length ? defaults : (newVars.length > 0 ? [newVars[0]] : []);
-        });
+        if (chartMode === 'extremos-frecuencia') {
+            setSelectedVars(['frequency']);
+        } else {
+            // Mantener la selección de variables si aún son válidas
+            setSelectedVars(prevSelectedVars => {
+            const stillValidVars = prevSelectedVars.filter(v => newVars.includes(v));
+            if (stillValidVars.length > 0) {
+                return stillValidVars;
+            }
+            // Si no, volver al default
+            const defaults = newVars.filter(v => ['TMAX','TMIN'].includes(String(v).toUpperCase()));
+            return defaults.length ? defaults : (newVars.length > 0 ? [newVars[0]] : []);
+            });
+        }
       })
       .catch(e => { if (e.name !== 'AbortError') console.error(e); })
       .finally(() => setLoadingChart(false));
     
     return () => ac.abort();
-  }, [selectedStation, chartMode, dateRange]);
+  }, [selectedStation, chartMode, dateRange, extremeParams]);
 
   /* == botón de centrar del BottomDock (usa la estación seleccionada) == */
   const centerOnStation = () => {
@@ -327,6 +350,8 @@ export default function App() {
         onChangeAnios={setMinAnios}
         filterDateRange={filterDateRange}
         onChangeFilterDateRange={setFilterDateRange}
+        onShowContact={() => setShowContact(true)}
+        onShowInfo={() => setShowInfo(true)}
       />
       {!sideOpen && (
           <button
@@ -364,7 +389,11 @@ export default function App() {
         onChangeChartMode={setChartMode}
         dateRange={dateRange}
         onChangeDateRange={setDateRange}
+        extremeParams={extremeParams}
+        onChangeExtremeParams={setExtremeParams}
       />
+      {showContact && <Contact onClose={() => setShowContact(false)} />}
+      {showInfo && <Info onClose={() => setShowInfo(false)} />}
     </div>
   );
 }

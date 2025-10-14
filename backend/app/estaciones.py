@@ -8,6 +8,10 @@ from .data_loader import (
     calculate_monthly_average, 
     calculate_yearly_average, 
     calculate_monthly_annual_cycle,
+    calculate_seasonal_average,
+    calculate_seasonal_cycle,
+    calculate_daily_percentiles,
+    calculate_extreme_event_frequency,
     filter_data_by_date
 )
 import pandas as pd
@@ -134,6 +138,66 @@ def obtener_ciclo_anual_mensual(
     """
     Calcula el promedio de cada mes a lo largo de todos los años para una estación.
     """
-    # La dependencia get_station_data ya se encarga de la carga y el error 404
-    # implícitamente a través de la función de cálculo.
     return calculate_monthly_annual_cycle(id, start_date=date_filters.start_date, end_date=date_filters.end_date)
+
+@router.get("/estaciones/{id:path}/estacional", summary="Calcula el agregado estacional de una estación")
+def obtener_agregado_estacional(
+    id: str,
+    date_filters: DateFilters = Depends()
+):
+    """
+    Calcula el agregado (promedio o suma) para cada estación del año (invierno, primavera, etc.)
+    para todas las variables numéricas de una estación específica.
+    """
+    return calculate_seasonal_average(id, start_date=date_filters.start_date, end_date=date_filters.end_date)
+
+@router.get("/estaciones/{id:path}/ciclo-anual-estacional", summary="Calcula el ciclo anual estacional de una estación")
+def obtener_ciclo_anual_estacional(
+    id: str,
+    date_filters: DateFilters = Depends()
+):
+    """
+    Calcula el promedio de los agregados estacionales para cada año.
+    """
+    return calculate_seasonal_cycle(id, start_date=date_filters.start_date, end_date=date_filters.end_date)
+
+@router.get("/estaciones/{id:path}/percentiles-diarios", summary="Calcula los percentiles diarios para una variable")
+def obtener_percentiles_diarios(
+    id: str,
+    variable: str = Query(..., description="La variable a calcular (ej. TMAX, TMIN, PRECIP)"),
+    percentil: int = Query(..., ge=0, le=100, description="El percentil a calcular (0-100)"),
+    date_filters: DateFilters = Depends()
+):
+    """
+    Calcula un percentil específico para cada día del año para una variable dada.
+    """
+    return calculate_daily_percentiles(
+        id, 
+        variable=variable, 
+        percentile=percentil, 
+        start_date=date_filters.start_date, 
+        end_date=date_filters.end_date
+    )
+
+@router.get("/estaciones/{id:path}/extremos/frecuencia", summary="Calcula la frecuencia de eventos extremos")
+def obtener_frecuencia_eventos_extremos(
+    id: str,
+    variable: str = Query(..., description="La variable a analizar (ej. TMAX, TMIN, PRECIP)"),
+    percentil: int = Query(..., ge=0, le=100, description="El percentil para el umbral (0-100)"),
+    operator: str = Query(..., description="El operador de comparación ('greater' o 'less')"),
+    date_filters: DateFilters = Depends()
+):
+    """
+    Calcula la frecuencia anual de días que superan un umbral de percentil.
+    """
+    if operator not in ['greater', 'less']:
+        raise HTTPException(status_code=400, detail="El operador debe ser 'greater' o 'less'")
+    
+    return calculate_extreme_event_frequency(
+        id,
+        variable=variable,
+        percentile=percentil,
+        operator=operator,
+        start_date=date_filters.start_date,
+        end_date=date_filters.end_date
+    )

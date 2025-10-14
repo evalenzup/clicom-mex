@@ -25,6 +25,8 @@ export default function SideDock({
   onChangeAnios,
   filterDateRange,
   onChangeFilterDateRange,
+  onShowContact,
+  onShowInfo,
 }) {
   return (
     <aside className={`sidedock ${collapsed ? 'sidedock--collapsed' : ''}`}>
@@ -37,6 +39,18 @@ export default function SideDock({
           ☰
         </button>
         {!collapsed && <div className="sidedock__title">Visor de Estaciones</div>}
+        <div style={{ marginLeft: 'auto' }}>
+            {!collapsed && (
+            <button className="icon-btn" title="Información" onClick={onShowInfo}>
+                ℹ️
+            </button>
+            )}
+            {!collapsed && (
+            <button className="icon-btn" title="Contacto" onClick={onShowContact}>
+                ✉️
+            </button>
+            )}
+        </div>
       </div>
 
       {!collapsed && (

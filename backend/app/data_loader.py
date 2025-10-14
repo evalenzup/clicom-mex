@@ -6,6 +6,7 @@ import numpy as np
 import json
 from pathlib import Path
 import logging
+from scipy.stats import linregress
 from . import store
 
 # Configuración de logging
@@ -125,6 +126,22 @@ def filter_data_by_date(df: pd.DataFrame, start_date: str | None, end_date: str 
         df = df[df['Fecha'] <= pd.to_datetime(end_date)]
     return df
 
+def get_aggregation_map(columns: list) -> dict:
+    """
+    Crea un diccionario de agregación para Pandas.
+    Suma las variables de precipitación/evaporación y promedia el resto.
+    """
+    # Variables que deben ser sumadas en lugar de promediadas
+    SUM_VARS = ["PRECIP", "EVAP"] 
+    
+    agg_map = {}
+    for col in columns:
+        if col in SUM_VARS:
+            agg_map[col] = 'sum'
+        else:
+            agg_map[col] = 'mean'
+    return agg_map
+
 def calculate_annual_cycle(station_id: str, start_date: str | None = None, end_date: str | None = None):
     """Calcula el ciclo anual para una estación dada, opcionalmente filtrando por un rango de fechas."""
     station_full_data = store.STATION_DATA.get(station_id)
@@ -150,8 +167,16 @@ def calculate_annual_cycle(station_id: str, start_date: str | None = None, end_d
     df['month'] = df['Fecha'].dt.month
     df['day'] = df['Fecha'].dt.day
 
-    # Now, groupby month and day, and aggregate only the original numeric columns
-    cycle_df = df.groupby(['month', 'day'])[numeric_cols].mean().reset_index()
+    # Agrupar por día y mes, aplicando la agregación correcta a cada variable
+    agg_map = get_aggregation_map(numeric_cols)
+    # FIX: Para el ciclo anual diario, necesitamos promediar todas las variables,
+    # incluyendo PRECIP y EVAP, para obtener el valor promedio de cada día del año.
+    # El mapa de agregación por defecto suma estas variables, lo cual es incorrecto aquí.
+    if 'PRECIP' in agg_map:
+        agg_map['PRECIP'] = 'mean'
+    if 'EVAP' in agg_map:
+        agg_map['EVAP'] = 'mean'
+    cycle_df = df.groupby(['month', 'day']).agg(agg_map).reset_index()
 
     cycle_df['dia_mes'] = cycle_df.apply(lambda row: f"{int(row['day']):02d}-{int(row['month']):02d}", axis=1)
     
@@ -182,8 +207,9 @@ def calculate_monthly_average(station_id: str, start_date: str | None = None, en
     if df.empty:
         return {"variables": numeric_cols, "datos": []}
 
-    # Agrupar por mes y calcular la media
-    monthly_df = df.groupby(df['Fecha'].dt.to_period('M'))[numeric_cols].mean().reset_index()
+    # Agrupar por mes y aplicar la agregación correcta
+    agg_map = get_aggregation_map(numeric_cols)
+    monthly_df = df.groupby(df['Fecha'].dt.to_period('M')).agg(agg_map).reset_index()
     
     # Convertir el periodo a string 'YYYY-MM'
     monthly_df['Fecha'] = monthly_df['Fecha'].dt.strftime('%Y-%m')
@@ -215,8 +241,9 @@ def calculate_yearly_average(station_id: str, start_date: str | None = None, end
     if df.empty:
         return {"variables": numeric_cols, "datos": []}
 
-    # Agrupar por año y calcular la media
-    yearly_df = df.groupby(df['Fecha'].dt.to_period('Y'))[numeric_cols].mean().reset_index()
+    # Agrupar por año y aplicar la agregación correcta
+    agg_map = get_aggregation_map(numeric_cols)
+    yearly_df = df.groupby(df['Fecha'].dt.to_period('Y')).agg(agg_map).reset_index()
     
     # Convertir el periodo a string 'YYYY'
     yearly_df['Fecha'] = yearly_df['Fecha'].dt.strftime('%Y')
@@ -248,16 +275,251 @@ def calculate_monthly_annual_cycle(station_id: str, start_date: str | None = Non
     if df.empty:
         return {"variables": numeric_cols, "datos": []}
 
-    # Agrupar por mes y calcular la media
-    monthly_cycle_df = df.groupby(df['Fecha'].dt.month)[numeric_cols].mean().reset_index()
+    df['Month'] = df['Fecha'].dt.month
+    df['Year'] = df['Fecha'].dt.year
+
+    # Definir columnas para suma y promedio
+    sum_cols = [col for col in numeric_cols if col in ["PRECIP", "EVAP"]]
+    mean_cols = [col for col in numeric_cols if col not in sum_cols]
+
+    # Crear mapa de agregación para el primer paso (agregados por mes dentro de cada año)
+    agg_map_yearly = {col: 'sum' for col in sum_cols}
+    agg_map_yearly.update({col: 'mean' for col in mean_cols})
+
+    # Paso 1: Calcular agregados mensuales para cada año
+    yearly_monthly_df = df.groupby(['Year', 'Month']).agg(agg_map_yearly).reset_index()
+
+    # Paso 2: Calcular el promedio de esos agregados a través de todos los años
+    final_df = yearly_monthly_df.groupby('Month')[numeric_cols].mean().reset_index()
     
-    # Renombrar la columna 'Fecha' a 'Mes' para claridad
-    monthly_cycle_df = monthly_cycle_df.rename(columns={'Fecha': 'Mes'})
-    monthly_cycle_df = monthly_cycle_df.sort_values(by='Mes')
+    # Renombrar la columna 'Month' a 'Mes' para claridad y consistencia
+    final_df = final_df.rename(columns={'Month': 'Mes'})
+    final_df = final_df.sort_values(by='Mes')
     
-    monthly_cycle_df = monthly_cycle_df.round(2).replace({np.nan: None})
+    final_df = final_df.round(2).replace({np.nan: None})
 
     return {
         "variables": numeric_cols,
-        "datos": monthly_cycle_df.to_dict(orient="records")
+        "datos": final_df.to_dict(orient="records")
+    }
+
+def calculate_seasonal_average(station_id: str, start_date: str | None = None, end_date: str | None = None):
+    """Calcula el agregado (promedio/suma) para cada estación de cada año."""
+    station_full_data = store.STATION_DATA.get(station_id)
+    if not station_full_data:
+        station_full_data = load_station_data(station_id)
+        if not station_full_data:
+            return None
+
+    logger.info(f"Calculando agregados estacionales por año para la estación {station_id}...")
+    df = pd.DataFrame(station_full_data['datos'])
+    if df.empty:
+        return {"variables": station_full_data['variables'], "datos": []}
+
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
+    numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+
+    df = filter_data_by_date(df, start_date, end_date)
+    if df.empty:
+        return {"variables": numeric_cols, "datos": []}
+
+    # Mapeo de meses a estaciones del año (hemisferio norte)
+    seasons = {
+        12: 'Invierno', 1: 'Invierno', 2: 'Invierno',
+        3: 'Primavera', 4: 'Primavera', 5: 'Primavera',
+        6: 'Verano', 7: 'Verano', 8: 'Verano',
+        9: 'Otoño', 10: 'Otoño', 11: 'Otoño'
+    }
+    df['Season'] = df['Fecha'].dt.month.map(seasons)
+    df['Year'] = df['Fecha'].dt.year
+
+    # Agrupar por año y luego por estación, y aplicar la agregación
+    agg_map = get_aggregation_map(numeric_cols)
+    seasonal_df = df.groupby(['Year', 'Season']).agg(agg_map).reset_index()
+
+    # Crear una columna de etiqueta para el eje X
+    seasonal_df['Fecha'] = seasonal_df['Season'] + ' ' + seasonal_df['Year'].astype(str)
+
+    # Asegurar el orden cronológico correcto
+    season_order = ['Primavera', 'Verano', 'Otoño', 'Invierno']
+    seasonal_df['Season'] = pd.Categorical(seasonal_df['Season'], categories=season_order, ordered=True)
+    seasonal_df = seasonal_df.sort_values(['Year', 'Season'])
+
+    seasonal_df = seasonal_df.round(2).replace({np.nan: None})
+
+    return {
+        "variables": numeric_cols,
+        "datos": seasonal_df.to_dict(orient="records")
+    }
+
+def calculate_seasonal_cycle(station_id: str, start_date: str | None = None, end_date: str | None = None):
+    """
+    Calcula el ciclo anual estacional.
+    Para PRECIP/EVAP: es el promedio de los acumulados estacionales de cada año.
+    Para el resto: es el promedio de los promedios estacionales de cada año.
+    """
+    station_full_data = store.STATION_DATA.get(station_id)
+    if not station_full_data:
+        station_full_data = load_station_data(station_id)
+        if not station_full_data:
+            return None
+
+    logger.info(f"Calculando ciclo anual estacional para la estación {station_id}...")
+    df = pd.DataFrame(station_full_data['datos'])
+    if df.empty:
+        return {"variables": station_full_data['variables'], "datos": []}
+
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
+    numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+
+    df = filter_data_by_date(df, start_date, end_date)
+    if df.empty:
+        return {"variables": numeric_cols, "datos": []}
+
+    # Mapeo de meses a estaciones
+    seasons = {
+        12: 'Invierno', 1: 'Invierno', 2: 'Invierno',
+        3: 'Primavera', 4: 'Primavera', 5: 'Primavera',
+        6: 'Verano', 7: 'Verano', 8: 'Verano',
+        9: 'Otoño', 10: 'Otoño', 11: 'Otoño'
+    }
+    df['Season'] = df['Fecha'].dt.month.map(seasons)
+    df['Year'] = df['Fecha'].dt.year
+
+    # Definir columnas para suma y promedio
+    sum_cols = [col for col in numeric_cols if col in ["PRECIP", "EVAP"]]
+    mean_cols = [col for col in numeric_cols if col not in sum_cols]
+
+    # Crear mapa de agregación para el primer paso (agregados por estación dentro de cada año)
+    agg_map_yearly = {col: 'sum' for col in sum_cols}
+    agg_map_yearly.update({col: 'mean' for col in mean_cols})
+
+    # Paso 1: Calcular agregados estacionales para cada año
+    yearly_seasonal_df = df.groupby(['Year', 'Season']).agg(agg_map_yearly).reset_index()
+
+    # Paso 2: Calcular el promedio de esos agregados a través de todos los años
+    final_df = yearly_seasonal_df.groupby('Season')[numeric_cols].mean().reset_index()
+
+    # Asegurar el orden correcto de las estaciones
+    season_order = ['Primavera', 'Verano', 'Otoño', 'Invierno']
+    final_df['Season'] = pd.Categorical(final_df['Season'], categories=season_order, ordered=True)
+    final_df = final_df.round(2).replace({np.nan: None})
+
+    return {
+        "variables": numeric_cols,
+        "datos": final_df.to_dict(orient="records")
+    }
+
+def calculate_daily_percentiles(station_id: str, variable: str, percentile: int, start_date: str | None = None, end_date: str | None = None):
+    """
+    Calcula los percentiles diarios para una variable y estación dadas.
+    """
+    station_full_data = store.STATION_DATA.get(station_id)
+    if not station_full_data:
+        station_full_data = load_station_data(station_id)
+        if not station_full_data:
+            return None
+
+    logger.info(f"Calculando percentiles diarios para la estación {station_id}, variable {variable}, percentil {percentile}...")
+    df = pd.DataFrame(station_full_data['datos'])
+    if df.empty or variable not in df.columns:
+        return {"variables": [], "datos": []}
+
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
+    df = filter_data_by_date(df, start_date, end_date)
+    if df.empty:
+        return {"variables": [], "datos": []}
+
+    # Asegurarse de que la variable es numérica
+    df[variable] = pd.to_numeric(df[variable], errors='coerce')
+    df = df.dropna(subset=[variable])
+
+    df['month'] = df['Fecha'].dt.month
+    df['day'] = df['Fecha'].dt.day
+
+    # Calcular el percentil
+    q = percentile / 100.0
+    percentile_df = df.groupby(['month', 'day'])[variable].quantile(q).reset_index()
+    percentile_df = percentile_df.rename(columns={variable: f"p{percentile}"})
+
+    percentile_df['dia_mes'] = percentile_df.apply(lambda row: f"{int(row['day']):02d}-{int(row['month']):02d}", axis=1)
+    
+    percentile_df = percentile_df.round(2).replace({np.nan: None})
+
+    return {
+        "variables": [f"p{percentile}"],
+        "datos": percentile_df.to_dict(orient="records")
+    }
+
+def calculate_extreme_event_frequency(station_id: str, variable: str, percentile: int, operator: str, start_date: str | None = None, end_date: str | None = None):
+    """
+    Calcula la frecuencia anual de eventos extremos para una variable y percentil dados.
+    """
+    # 1. Obtener los umbrales de percentiles diarios
+    percentiles_data = calculate_daily_percentiles(station_id, variable, percentile, start_date, end_date)
+    if not percentiles_data or not percentiles_data.get('datos'):
+        return {"variables": [], "datos": []}
+    
+    percentile_df = pd.DataFrame(percentiles_data['datos'])
+    # Renombrar la columna del percentil para la fusión
+    percentile_df = percentile_df.rename(columns={f"p{percentile}": 'threshold'})
+
+    # 2. Obtener los datos brutos de la estación
+    station_full_data = store.STATION_DATA.get(station_id)
+    if not station_full_data:
+        # No debería pasar si calculate_daily_percentiles funcionó, pero por si acaso
+        return {"variables": [], "datos": []}
+
+    df = pd.DataFrame(station_full_data['datos'])
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
+    df = filter_data_by_date(df, start_date, end_date)
+    if df.empty or variable not in df.columns:
+        return {"variables": [], "datos": []}
+
+    df[variable] = pd.to_numeric(df[variable], errors='coerce')
+    df = df.dropna(subset=[variable])
+
+    # 3. Preparar para la fusión
+    df['month'] = df['Fecha'].dt.month
+    df['day'] = df['Fecha'].dt.day
+
+    # 4. Fusionar datos diarios con umbrales
+    merged_df = pd.merge(df, percentile_df[['month', 'day', 'threshold']], on=['month', 'day'])
+
+    # 5. Identificar eventos extremos
+    if operator == 'greater':
+        merged_df['is_extreme'] = merged_df[variable] > merged_df['threshold']
+    elif operator == 'less':
+        merged_df['is_extreme'] = merged_df[variable] < merged_df['threshold']
+    else:
+        raise ValueError("El operador debe ser 'greater' o 'less'")
+
+    # 6. Contar eventos por año
+    merged_df['year'] = merged_df['Fecha'].dt.year
+    frequency_df = merged_df.groupby('year')['is_extreme'].sum().reset_index()
+    frequency_df = frequency_df.rename(columns={'is_extreme': 'frequency', 'year': 'Fecha'})
+
+    frequency_df = frequency_df.round(2).replace({np.nan: None})
+
+    # 7. Calcular la línea de tendencia
+    trend_data = {}
+    if not frequency_df.empty and len(frequency_df) > 1:
+        x = frequency_df['Fecha']
+        y = frequency_df['frequency']
+        slope, intercept, r_value, p_value, std_err = linregress(x, y)
+        
+        # Crear los puntos de la línea de tendencia
+        trend_line = (slope * x + intercept).tolist()
+        
+        trend_data = {
+            "slope": slope,
+            "p_value": p_value,
+            "is_significant": bool(p_value < 0.05),
+            "trend_line_points": trend_line
+        }
+
+    return {
+        "variables": ['frequency'],
+        "datos": frequency_df.to_dict(orient="records"),
+        "trend": trend_data
     }

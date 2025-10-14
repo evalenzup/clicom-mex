@@ -9,7 +9,17 @@ dayjs.extend(customParseFormat);
 
 const { RangePicker } = DatePicker;
 
-const PALETTE = ['#5ad8a6','#5b8ff9','#f6bd16','#e8684a','#6dc8ec','#9270ca','#ff9d4d'];
+const VAR_COLORS = {
+  'TMAX': '#e8684a',
+  'TMIN': '#5b8ff9',
+  'PRECIP': '#6dc8ec',
+  'EVAP': '#f6bd16',
+  'TProm': '#5ad8a6',
+  'TRango': '#9270ca',
+};
+const FALLBACK_COLOR = '#ff9d4d';
+
+const getColorForVar = (name) => VAR_COLORS[name] || FALLBACK_COLOR;
 const norm = s => String(s || '').trim().toUpperCase();
 
 const isTemp = (v) => ['T','TMP','TEMP','TEMPERATURA','TMAX','TMIN', 'TPROM', 'TRANGO'].includes(norm(v));
@@ -34,6 +44,8 @@ export default function BottomDock({
   onChangeChartMode,
   dateRange,
   onChangeDateRange,
+  extremeParams,
+  onChangeExtremeParams,
 }) {
   const chartRef = useRef(null);
   const chart = useRef(null);
@@ -164,7 +176,7 @@ export default function BottomDock({
           type: 'value',
           min: axisMin,
           max: axisMax,
-          name: unit || '',
+          // name: unit || '', // Quitado para que no sea título
           nameTextStyle: { color: '#c9d3e3' },
           axisLabel: {
             color: '#c9d3e3',
@@ -229,7 +241,8 @@ export default function BottomDock({
 
     const series = visible.map((name) => ({
       name,
-      type: 'line',
+      type: isPrecip(name) ? 'bar' : 'line',
+      barMaxWidth: isPrecip(name) ? 20 : null,
       smooth: true,
       showSymbol: false,
       sampling: 'lttb',
@@ -243,17 +256,85 @@ export default function BottomDock({
         if (isTemp(name) && v === 0) return null;
         return Number.isFinite(v) ? v : null;
       }),
-      itemStyle: { color: PALETTE[vars.indexOf(name) % PALETTE.length] },
+      itemStyle: { color: getColorForVar(name) },
     }));
+
+    if (chartMode === 'extremos-frecuencia' && chartData?.trend?.trend_line_points) {
+        series.push({
+            name: 'Tendencia',
+            type: 'line',
+            smooth: true,
+            showSymbol: false,
+            lineStyle: {
+                width: 2,
+                type: 'dashed',
+                color: '#e83e8c'
+            },
+            data: chartData.trend.trend_line_points,
+            yAxisIndex: 0, // Assuming the frequency is on the first y-axis
+        });
+
+        // Add trend info to legend
+        visible.push('Tendencia');
+    }
+
+    const chartModeTitles = {
+      'diarios': 'Diarios',
+      'promedio-mensual': 'Mensual',
+      'promedio-anual': 'Anual',
+      'estacional': 'Estacional',
+      'ciclo-anual': 'Ciclo Anual (Diario)',
+      'ciclo-anual-mensual': 'Ciclo Anual (Mensual)',
+      'ciclo-anual-estacional': 'Ciclo Anual (Estacional)',
+      'extremos-frecuencia': 'Frecuencia de Eventos Extremos',
+    };
+
+    let titleText = `${station?.NOMBRE || 'Estación'} - ${chartModeTitles[chartMode] || ''}`;
+    if (chartMode === 'extremos-frecuencia') {
+        titleText += ` de ${extremeParams.variable}`;
+    }
+
+    let subtext = `Datos de ${station?.fecha_inicial_datos || ''} a ${station?.fecha_final_datos || ''}`;
+    if (chartMode === 'extremos-frecuencia' && chartData?.trend) {
+        const trend = chartData.trend;
+        const slope = trend.slope.toFixed(3);
+        const pValue = trend.p_value.toFixed(4);
+        const significance = trend.is_significant ? 'significativa' : 'no significativa';
+        subtext += ` | Tendencia: ${slope} por año (p=${pValue}, ${significance})`;
+    }
 
     chart.current.setOption({
       animation: false,
       animationDurationUpdate: 0,
       animationEasingUpdate: 'linear',
 
-      color: PALETTE,
+      title: {
+        text: titleText,
+        subtext: subtext,
+        left: 'center',
+        textStyle: {
+          color: '#e6f1ff',
+          fontSize: 16,
+        },
+        subtextStyle: {
+          color: '#c9d3e3',
+          fontSize: 12,
+        },
+      },
+
+      legend: {
+        data: visible,
+        top: 35,
+        right: 20, // Alinear a la derecha
+        textStyle: {
+          color: '#c9d3e3',
+        },
+        type: 'scroll',
+      },
+
+      color: [...Object.values(VAR_COLORS), FALLBACK_COLOR],
       backgroundColor: 'transparent',
-      grid: { left: 56, right: 24, top: 10, bottom: 52 },
+      grid: { left: 56, right: 24, top: 70, bottom: 52 }, // Ajustar grid
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'line', animation: false, snap: true },
@@ -266,8 +347,12 @@ export default function BottomDock({
           if (!params?.length) return '';
           const date = params[0].axisValueLabel ?? '';
           const rows = params.map(p => {
-            const u = unitForVar(p.seriesName);
-            const val = (p.value == null || Number.isNaN(p.value)) ? '—' : `${p.value} ${u}`;
+            let u = unitForVar(p.seriesName);
+            let val = (p.value == null || Number.isNaN(p.value)) ? '—' : `${p.value} ${u}`;
+            if (p.seriesName === 'Tendencia') {
+                u = ''; // No units for trend
+                val = (p.value == null || Number.isNaN(p.value)) ? '—' : `${Number(p.value).toFixed(4)}`;
+            }
             return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
               <span style="display:flex;align-items:center;gap:6px;">${p.marker}<span>${p.seriesName}</span></span>
               <b>${val}</b>
@@ -288,6 +373,8 @@ export default function BottomDock({
             const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
             return monthNames[d.Mes - 1];
           }
+          if (chartMode === 'estacional') return d.Fecha;
+          if (chartMode === 'ciclo-anual-estacional') return d.Season;
           return d.Fecha;
         }),
         axisLabel: { color: '#c9d3e3', hideOverlap: true },
@@ -367,7 +454,7 @@ export default function BottomDock({
                       onClick={() => toggleVar(s)}
                       title={s}
                       style={active ? {
-                        background: PALETTE[(chartData?.variables ?? []).indexOf(s) % PALETTE.length],
+                        background: getColorForVar(s),
                         color: '#0b0f14',
                         borderColor: 'transparent',
                         boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.15)'
@@ -394,14 +481,21 @@ export default function BottomDock({
                   onClick={() => onChangeChartMode('promedio-mensual')}
                   style={chartMode === 'promedio-mensual' ? { background: '#5ad8a6', color: '#fff' } : {}}
                 >
-                  Promedio Mensual
+                  Mensual
                 </button>
                 <button
                   className={`chip ${chartMode === 'promedio-anual' ? 'chip--active' : ''}`}
                   onClick={() => onChangeChartMode('promedio-anual')}
                   style={chartMode === 'promedio-anual' ? { background: '#5ad8a6', color: '#fff' } : {}}
                 >
-                  Promedio Anual
+                  Anual
+                </button>
+                <button
+                  className={`chip ${chartMode === 'estacional' ? 'chip--active' : ''}`}
+                  onClick={() => onChangeChartMode('estacional')}
+                  style={chartMode === 'estacional' ? { background: '#5ad8a6', color: '#fff' } : {}}
+                >
+                  Estacional
                 </button>
                 <button
                   className={`chip ${chartMode === 'ciclo-anual' ? 'chip--active' : ''}`}
@@ -417,6 +511,20 @@ export default function BottomDock({
                 >
                   Ciclo Anual (Mensual)
                 </button>
+                <button
+                  className={`chip ${chartMode === 'ciclo-anual-estacional' ? 'chip--active' : ''}`}
+                  onClick={() => onChangeChartMode('ciclo-anual-estacional')}
+                  style={chartMode === 'ciclo-anual-estacional' ? { background: '#5ad8a6', color: '#fff' } : {}}
+                >
+                  Ciclo Anual (Estacional)
+                </button>
+                <button
+                  className={`chip ${chartMode === 'extremos-frecuencia' ? 'chip--active' : ''}`}
+                  onClick={() => onChangeChartMode('extremos-frecuencia')}
+                  style={chartMode === 'extremos-frecuencia' ? { background: '#5ad8a6', color: '#fff' } : {}}
+                >
+                  Frecuencia de Extremos
+                </button>
               </div>
             </div>
             <div className="control-group">
@@ -429,6 +537,46 @@ export default function BottomDock({
                 }}
               />
             </div>
+            {chartMode === 'extremos-frecuencia' && (
+              <div className="control-group">
+                <label className="label" style={{ marginBottom: '8px', display: 'block' }}>
+                  Parámetros de Extremos
+                  <span title="Se calcula la frecuencia de días en que la variable supera (o es inferior a) un umbral de percentil. El umbral se calcula para cada día del año a partir de todo el periodo histórico." style={{ marginLeft: '8px', cursor: 'help' }}>
+                    ℹ️
+                  </span>
+                </label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <select
+                    className="input"
+                    style={{ minWidth: '70px' }}
+                    value={extremeParams.variable}
+                    onChange={(e) => onChangeExtremeParams({ ...extremeParams, variable: e.target.value })}
+                  >
+                    <option value="TMAX">TMAX</option>
+                    <option value="TMIN">TMIN</option>
+                    <option value="PRECIP">PRECIP</option>
+                  </select>
+                  <select
+                    className="input"
+                    value={extremeParams.operator}
+                    onChange={(e) => onChangeExtremeParams({ ...extremeParams, operator: e.target.value })}
+                  >
+                    <option value="greater">&gt;</option>
+                    <option value="less">&lt;</option>
+                  </select>
+                  <input
+                    type="number"
+                    className="input"
+                    style={{ width: '60px', textAlign: 'left' }}
+                    value={extremeParams.percentile}
+                    onChange={(e) => onChangeExtremeParams({ ...extremeParams, percentile: parseInt(e.target.value, 10) })}
+                    min="0"
+                    max="100"
+                  />
+                  
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
